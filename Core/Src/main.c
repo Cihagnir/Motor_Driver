@@ -73,8 +73,8 @@ static void MX_TIM3_Init(void);
 
 void Motor_Driver(Mosfet_Driver_Typedef MD_one, Mosfet_Driver_Typedef MD_two,
 		Mosfet_Driver_Typedef MD_three, uint8_t Hall_T);
-void Mosfet_Control(Mosfet_Driver_Typedef MD_one, Mosfet_Driver_Typedef MD_two,
-					Mosfet_Driver_Typedef MD_three, uint8_t case_var, uint8_t button);
+
+void Speed_Sensor(uint8_t Hall_case, uint8_t Is_second, uint8_t Speed_motor, uint32_t Var_msec);
 
 /* USER CODE END PFP */
 
@@ -165,18 +165,12 @@ int main(void)
 	uint8_t HB_Res = 0;
 	uint8_t HC_Res = 0;
 	uint8_t HT_Res = 0;
-	uint8_t Button = 0;
 
-	uint8_t Prvs_button = 3;
-	uint8_t Case = 0 ;
+	uint8_t User_speed = 0;
+	uint8_t Motor_speed = 0;
+	uint32_t Value_msec = 0;
 
 	uint8_t Is_break = 0;
-
-	uint8_t Prvs_hall = 0;
-	uint8_t Index = 0;
-	uint8_t Is_limit = 1;
-
-	char List_hall[50] = {0};
 
 	/*
 	 Hall List One => 1, 2, 3, 4, 5, 6
@@ -186,8 +180,7 @@ int main(void)
 
 	while (1){
 
-		Button = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_3);
-		Is_break = Button;
+		Is_break = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_3);
 
 		/* HAL SENSÖR OKUMASI*/
 		HA_Res = HAL_GPIO_ReadPin(Hall_A.H_Pin, Hall_A.HP_Number);
@@ -198,7 +191,7 @@ int main(void)
 		HC_Res = HC_Res << 2;
 		HT_Res = HC_Res | HB_Res | HA_Res;
 
-
+		Speed_Sensor(HT_Res,Value_msec ,Motor_speed, Value_msec);
 		/* SÜRERSE GENEL SÜRÜCÜ*/
 		if (Is_break) {
 			HAL_TIM_PWM_Stop(&MD_One.HS_Tim, MD_One.HST_Channel);
@@ -212,31 +205,10 @@ int main(void)
 
 			}
 		else {
-		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_RESET);
 			Motor_Driver(MD_One, MD_Two, MD_Three, HT_Res);
 		}
 
-
-		/* MOSFET KONTROL ABİMİZ
-
-		if (Prvs_button != Button) {
-			Mosfet_Control(MD_One, MD_Two, MD_Three, Case, Button);
-			Prvs_button = Button ;
-			Case++ ;
-			if (Case == 7) {
-				Case = 0;
-			}
-		}*/
-
-		/* HAL DEPOLAYICI
-		 if ((Prvs_hall != HT_Res)& (Is_limit)) {
-		 List_hall[Index] = HT_Res;
-		 Prvs_hall = HT_Res;
-		 Index ++ ;
-		 if (Index == 50) {
-		 Is_limit = 0;
-		 }}
-		 */
 
     /* USER CODE END WHILE */
 
@@ -534,46 +506,20 @@ void Motor_Driver(Mosfet_Driver_Typedef MD_one, Mosfet_Driver_Typedef MD_two,
 
 }
 
-void Mosfet_Control(Mosfet_Driver_Typedef MD_one, Mosfet_Driver_Typedef MD_two,
-					Mosfet_Driver_Typedef MD_three,uint8_t case_var, uint8_t button){
+void Speed_Sensor(uint8_t Hall_case, uint8_t Is_second,uint8_t Speed_motor, uint32_t Var_msec){
 
-	HAL_TIM_PWM_Stop(&MD_one.HS_Tim, MD_one.HST_Channel);
-	HAL_GPIO_WritePin(MD_one.LS_Pin, MD_one.LSP_Number, GPIO_PIN_SET);
-	HAL_TIM_PWM_Stop(&MD_two.HS_Tim, MD_two.HST_Channel);
-	HAL_GPIO_WritePin(MD_two.LS_Pin, MD_two.LSP_Number, GPIO_PIN_SET);
-	HAL_TIM_PWM_Stop(&MD_three.HS_Tim, MD_three.HST_Channel);
-	HAL_GPIO_WritePin(MD_three.LS_Pin, MD_three.LSP_Number, GPIO_PIN_SET);
-
-	switch (case_var) {
-		case 1:
-			HAL_TIM_PWM_Start(&MD_one.HS_Tim, MD_one.HST_Channel);
-			__HAL_TIM_SET_COMPARE(&MD_one.HS_Tim, MD_one.HST_Channel,50);
-			break;
-		case 2:
-			HAL_GPIO_WritePin(MD_one.LS_Pin, MD_one.LSP_Number, GPIO_PIN_RESET);
-			break;
-		case 3:
-			HAL_TIM_PWM_Start(&MD_two.HS_Tim, MD_two.HST_Channel);
-			__HAL_TIM_SET_COMPARE(&MD_two.HS_Tim, MD_two.HST_Channel,50);
-			break;
-		case 4:
-			HAL_GPIO_WritePin(MD_two.LS_Pin, MD_two.LSP_Number, GPIO_PIN_RESET);
-			break;
-		case 5:
-			HAL_TIM_PWM_Start(&MD_three.HS_Tim, MD_three.HST_Channel);
-			__HAL_TIM_SET_COMPARE(&MD_three.HS_Tim, MD_three.HST_Channel,50);
-			break;
-		case 6:
-			HAL_GPIO_WritePin(MD_three.LS_Pin, MD_three.LSP_Number, GPIO_PIN_RESET);
-			break;
-		default:
-			break;
+	if (Hall_case == 1) {
+		uint32_t Temp_msec = HAL_GetTick();
+		if (Is_second) {
+			Speed_motor = (int) 60000/(Temp_msec - Var_msec);
+			Var_msec = 0;
+		}
+		else {
+			Var_msec = HAL_GetTick();
+		}
 	}
 
-
 }
-
-
 /* USER CODE END 4 */
 
 /**
