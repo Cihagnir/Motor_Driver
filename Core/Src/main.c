@@ -57,10 +57,21 @@ typedef struct {
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+CAN_HandleTypeDef hcan;
+
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 
 /* USER CODE BEGIN PV */
+
+CAN_TxHeaderTypeDef Com_TxHeader;
+CAN_RxHeaderTypeDef Com_RxHeader;
+
+uint32_t My_TxMailbox;
+
+uint8_t Com_TxData[8];
+uint8_t Com_RxData[8];
+
 
 /* USER CODE END PV */
 
@@ -69,12 +80,16 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_CAN_Init(void);
 /* USER CODE BEGIN PFP */
 
 void Motor_Driver(Mosfet_Driver_Typedef MD_one, Mosfet_Driver_Typedef MD_two,
 		Mosfet_Driver_Typedef MD_three, uint8_t Hall_T);
 
 void Speed_Sensor(uint8_t Hall_case, uint8_t Is_second, uint8_t Speed_motor, uint32_t Var_msec);
+
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan);
+
 
 /* USER CODE END PFP */
 
@@ -113,12 +128,13 @@ int main(void)
   MX_GPIO_Init();
   MX_TIM2_Init();
   MX_TIM3_Init();
+  MX_CAN_Init();
   /* USER CODE BEGIN 2 */
 
 	HAL_TIM_Base_Init(&htim2);
 	HAL_TIM_Base_Init(&htim3);
 
-	Mosfet_Driver_Typedef MD_One = { 0 };
+	Mosfet_Driver_Typedef MD_One;
 	MD_One.LS_Pin = GPIOB;
 	MD_One.LSP_Number = GPIO_PIN_10;
 	MD_One.HS_Tim = htim2;
@@ -156,6 +172,16 @@ int main(void)
 
 	HAL_TIM_Base_Start(&htim2);
 	HAL_TIM_Base_Start(&htim3);
+	HAL_CAN_Start(&hcan);
+
+	// Burdakİ FIFO0 veya FIFO1 olması senin mesaj bekleme fonksiyonunda doldurduğun alanıda etkiler
+	HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
+
+	Com_TxHeader.DLC = 8;
+	Com_TxHeader.IDE = CAN_ID_STD;
+	Com_TxHeader.RTR = CAN_RTR_DATA;
+	Com_TxHeader.StdId = 0x00011111;
+	Com_TxHeader.TransmitGlobalTime = DISABLE;
 
   /* USER CODE END 2 */
 
@@ -171,6 +197,7 @@ int main(void)
 	uint32_t Value_msec = 0;
 
 	uint8_t Is_break = 0;
+	uint8_t Temp_value = 0;
 
 	/*
 	 Hall List One => 1, 2, 3, 4, 5, 6
@@ -191,7 +218,9 @@ int main(void)
 		HC_Res = HC_Res << 2;
 		HT_Res = HC_Res | HB_Res | HA_Res;
 
+		/* HIZ ÖLÇMEK İÇİN GÖTÜME SOKACAĞIM AYGIT */
 		Speed_Sensor(HT_Res,Value_msec ,Motor_speed, Value_msec);
+
 		/* SÜRERSE GENEL SÜRÜCÜ*/
 		if (Is_break) {
 			HAL_TIM_PWM_Stop(&MD_One.HS_Tim, MD_One.HST_Channel);
@@ -208,6 +237,21 @@ int main(void)
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_RESET);
 			Motor_Driver(MD_One, MD_Two, MD_Three, HT_Res);
 		}
+
+		/* CAN CONMMINICATION AREA - GİRENİ S*KERLER
+
+		Com_TxData[0] = Motor_speed ;
+		Com_TxData[1] = Temp_value ;
+		Com_TxData[2] = 72/User_speed;
+		Com_TxData[3] = 0;
+		Com_TxData[4] = 0;
+		Com_TxData[5] = 0;
+		Com_TxData[6] = 0;
+		Com_TxData[7] = 0;
+
+		HAL_CAN_AddTxMessage(&hcan, &Com_TxHeader, Com_TxData, &My_TxMailbox);
+
+		*/
 
 
     /* USER CODE END WHILE */
@@ -254,6 +298,43 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief CAN Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_CAN_Init(void)
+{
+
+  /* USER CODE BEGIN CAN_Init 0 */
+
+  /* USER CODE END CAN_Init 0 */
+
+  /* USER CODE BEGIN CAN_Init 1 */
+
+  /* USER CODE END CAN_Init 1 */
+  hcan.Instance = CAN1;
+  hcan.Init.Prescaler = 18;
+  hcan.Init.Mode = CAN_MODE_NORMAL;
+  hcan.Init.SyncJumpWidth = CAN_SJW_1TQ;
+  hcan.Init.TimeSeg1 = CAN_BS1_2TQ;
+  hcan.Init.TimeSeg2 = CAN_BS2_1TQ;
+  hcan.Init.TimeTriggeredMode = DISABLE;
+  hcan.Init.AutoBusOff = DISABLE;
+  hcan.Init.AutoWakeUp = DISABLE;
+  hcan.Init.AutoRetransmission = DISABLE;
+  hcan.Init.ReceiveFifoLocked = DISABLE;
+  hcan.Init.TransmitFifoPriority = DISABLE;
+  if (HAL_CAN_Init(&hcan) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN CAN_Init 2 */
+
+  /* USER CODE END CAN_Init 2 */
+
 }
 
 /**
@@ -393,13 +474,13 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6|GPIO_PIN_10|GPIO_PIN_11, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0|GPIO_PIN_10, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : PA6 PA10 PA11 */
-  GPIO_InitStruct.Pin = GPIO_PIN_6|GPIO_PIN_10|GPIO_PIN_11;
+  /*Configure GPIO pin : PA6 */
+  GPIO_InitStruct.Pin = GPIO_PIN_6;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -520,6 +601,18 @@ void Speed_Sensor(uint8_t Hall_case, uint8_t Is_second,uint8_t Speed_motor, uint
 	}
 
 }
+
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan){
+
+	HAL_CAN_GetRxMessage(hcan, My_TxMailbox, &Com_RxHeader, Com_RxData);
+
+	/* Bu alan senin gelen mesaju götüne sokup sokmayacağına değerlendirdiğin alandır.
+	 * Teknik olarak ne yapıp yapmayacağını bilmek sana kalmış ama benim nacizane fikrim vazalin sürmen
+	 *
+	 */
+
+}
+
 /* USER CODE END 4 */
 
 /**
