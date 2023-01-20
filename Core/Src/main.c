@@ -49,6 +49,7 @@ typedef struct {
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define Motor_Speed  	Current_rpm
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -57,6 +58,8 @@ typedef struct {
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
+
 CAN_HandleTypeDef hcan;
 
 TIM_HandleTypeDef htim1;
@@ -70,33 +73,28 @@ CAN_RxHeaderTypeDef Com_RxHeader;
 
 uint32_t My_TxMailbox;
 
-uint8_t Com_TxData[8];
-uint8_t Com_RxData[8];
-
+uint8_t Com_TxData[2];
+uint8_t Com_RxData[2];
 
 uint8_t HA_Res = 0;
 uint8_t HB_Res = 0;
 uint8_t HC_Res = 0;
 uint8_t HT_Res = 0;
 
-float Motor_Speed = 0 ;
-uint32_t Rott_Count = 0 ;
-uint8_t Prvs_Hal = 0;
+uint16_t Motor_Speed = 0 ;
+uint16_t Rott_Count = 0 ;
+uint8_t  User_Speed = 0;
+uint8_t  Prvs_Hal = 0;
 
-uint8_t User_Speed = 0 ;
-uint8_t Is_break = 0 ;
-uint8_t Is_reverse = 0 ;
+uint8_t Is_reverse = 0;
+uint8_t Is_break = 0;
+/* */
 
-uint8_t MD_one_HS = 0;
-uint8_t MD_one_LS = 0;
+uint16_t Prvs_Rpm = 0;
+uint8_t  Delta_Speed = 8;
+uint8_t  Control_speed = 0 ;
 
-uint8_t MD_two_HS = 0;
-uint8_t MD_two_LS = 0;
-
-uint8_t MD_three_HS = 0;
-uint8_t MD_three_LS = 0;
-
-
+uint8_t  Ignition = 1;
 
 
 /* USER CODE END PV */
@@ -108,7 +106,11 @@ static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_CAN_Init(void);
 static void MX_TIM1_Init(void);
+static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
+
+int Speed_Controller(uint8_t user_speed, uint16_t current_rpm, uint16_t prvs_rpm,
+		 uint8_t delta_speed, uint8_t control_speed, uint8_t  ignition);
 
 void Motor_Driver(Mosfet_Driver_Typedef MD_one, Mosfet_Driver_Typedef MD_two,
 		Mosfet_Driver_Typedef MD_three, uint8_t Hall_T, uint8_t User_speed);
@@ -119,7 +121,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan);
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
 	if (htim->Instance == htim1.Instance ){
-		Motor_Speed = Rott_Count*60/24;
+		Motor_Speed = (int) Rott_Count*60/24;
 
 		Rott_Count = 0;
 	}
@@ -164,6 +166,7 @@ int main(void)
   MX_TIM3_Init();
   MX_CAN_Init();
   MX_TIM1_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
 
 	Mosfet_Driver_Typedef MD_One;
@@ -203,12 +206,13 @@ int main(void)
 	HAL_TIM_Base_Start(&htim2);
 	HAL_TIM_Base_Start(&htim3);
 	HAL_CAN_Start(&hcan);
+	HAL_ADC_Start(&hadc1);
 
 
 	// Burdakİ FIFO0 veya FIFO1 olması senin mesaj bekleme fonksiyonunda doldurduğun alanıda etkiler
 	HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
 
-	Com_TxHeader.DLC = 8;
+	Com_TxHeader.DLC = 2;
 	Com_TxHeader.IDE = CAN_ID_STD;
 	Com_TxHeader.RTR = CAN_RTR_DATA;
 	Com_TxHeader.StdId = 0x00011111;
@@ -220,9 +224,9 @@ int main(void)
   /* USER CODE BEGIN WHILE */
 
 	while (1){
-		User_Speed = 20;
-		// Is_break = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_3);
-		Is_reverse = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_3);
+		User_Speed = (int) HAL_ADC_GetValue(&hadc1)*100/4096;
+		Is_break = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_3);
+		// Is_reverse = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_3);
 
 		/* HAL SENSÖR OKUMASI*/
 		HA_Res = HAL_GPIO_ReadPin(Hall_A.H_Pin, Hall_A.HP_Number);
@@ -240,26 +244,45 @@ int main(void)
 			}
 			Prvs_Hal = HT_Res;
 		}
+		/* AYARLARSA HIZ AYARLAYICI
+		if (!(Control_speed == User_Speed)) {
+			Control_speed = Speed_Controller(User_Speed, Current_rpm, Prvs_Rpm, Delta_Speed, Control_speed, Ignition);
+		}
+	`	*/
+
 
 
 		/* SÜRERSE GENEL SÜRÜCÜ */
 
-		Motor_Driver(MD_One, MD_Two, MD_Three, HT_Res, User_Speed);
+		if (Is_break) { // Break If
+			HAL_TIM_PWM_Stop(&MD_One.HS_Tim, MD_One.HST_Channel);
+			HAL_TIM_PWM_Stop(&MD_Two.HS_Tim, MD_Two.HST_Channel);
+			HAL_TIM_PWM_Stop(&MD_Three.HS_Tim, MD_Three.HST_Channel);
 
-		/* CAN CONMMINICATION AREA - GİRENİ S*KERLER
+			HAL_GPIO_WritePin(MD_One.LS_Pin, MD_One.LSP_Number, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(MD_Two.LS_Pin, MD_Two.LSP_Number, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(MD_Three.LS_Pin, MD_Three.LSP_Number, GPIO_PIN_RESET);
 
-		Com_TxData[0] = Motor_speed ;
-		Com_TxData[1] = Temp_value ;
-		Com_TxData[2] = 72/User_speed;
-		Com_TxData[3] = 0;
-		Com_TxData[4] = 0;
-		Com_TxData[5] = 0;
-		Com_TxData[6] = 0;
-		Com_TxData[7] = 0;
+		}
+		else {
+			if (Is_reverse) { // Reverse If
+				HT_Res = 7 - HT_Res ;
+				Motor_Driver(MD_One, MD_Two, MD_Three, HT_Res, User_Speed);
+			}
+			else {
+				Motor_Driver(MD_One, MD_Two, MD_Three, HT_Res, User_Speed);
+			}
+		}
+
+		/* CAN CONMMINICATION AREA - GİRENİ S*KERLER */
+
+		Com_TxData[0] = Motor_Speed ;
+		Com_TxData[1] = User_Speed ;
+
 
 		HAL_CAN_AddTxMessage(&hcan, &Com_TxHeader, Com_TxData, &My_TxMailbox);
 
-		*/
+
 
 
     /* USER CODE END WHILE */
@@ -277,6 +300,7 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -306,6 +330,59 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC;
+  PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV6;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+
+  /** Common config
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc1.Init.ContinuousConvMode = ENABLE;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.NbrOfConversion = 1;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_0;
+  sConfig.Rank = ADC_REGULAR_RANK_1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
 }
 
 /**
@@ -325,7 +402,7 @@ static void MX_CAN_Init(void)
   /* USER CODE END CAN_Init 1 */
   hcan.Instance = CAN1;
   hcan.Init.Prescaler = 18;
-  hcan.Init.Mode = CAN_MODE_NORMAL;
+  hcan.Init.Mode = CAN_MODE_LOOPBACK;
   hcan.Init.SyncJumpWidth = CAN_SJW_1TQ;
   hcan.Init.TimeSeg1 = CAN_BS1_2TQ;
   hcan.Init.TimeSeg2 = CAN_BS2_1TQ;
@@ -547,8 +624,14 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PB3 PB7 PB8 PB9 */
-  GPIO_InitStruct.Pin = GPIO_PIN_3|GPIO_PIN_7|GPIO_PIN_8|GPIO_PIN_9;
+  /*Configure GPIO pin : PB3 */
+  GPIO_InitStruct.Pin = GPIO_PIN_3;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PB5 PB7 PB8 PB9 */
+  GPIO_InitStruct.Pin = GPIO_PIN_5|GPIO_PIN_7|GPIO_PIN_8|GPIO_PIN_9;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
@@ -558,19 +641,9 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void Motor_Driver(Mosfet_Driver_Typedef MD_one, Mosfet_Driver_Typedef MD_two,
 		Mosfet_Driver_Typedef MD_three, uint8_t Hall_T, uint8_t User_Speed) {
-
-	 MD_one_HS = 0;
-	 MD_one_LS = 0;
-
-	 MD_two_HS = 0;
-	 MD_two_LS = 0;
-
-	 MD_three_HS = 0;
-	 MD_three_LS = 0;
-
 	switch (Hall_T) {
 
-	case 6:
+	case 1:
 		// 2 > 1
 		HAL_GPIO_WritePin(MD_two.LS_Pin, MD_two.LSP_Number, GPIO_PIN_SET);
 		HAL_GPIO_WritePin(MD_three.LS_Pin, MD_three.LSP_Number, GPIO_PIN_SET);
@@ -581,11 +654,8 @@ void Motor_Driver(Mosfet_Driver_Typedef MD_one, Mosfet_Driver_Typedef MD_two,
 		HAL_TIM_PWM_Start(&MD_two.HS_Tim, MD_two.HST_Channel);
 		__HAL_TIM_SET_COMPARE(&MD_two.HS_Tim, MD_two.HST_Channel, User_Speed);
 
-		 MD_two_HS = 1;
-		 MD_one_LS = 1;
-
 		break;
-	case 5:
+	case 2:
 		// 3 > 2
 		HAL_GPIO_WritePin(MD_three.LS_Pin, MD_three.LSP_Number, GPIO_PIN_SET);
 		HAL_GPIO_WritePin(MD_one.LS_Pin, MD_one.LSP_Number, GPIO_PIN_SET);
@@ -596,11 +666,8 @@ void Motor_Driver(Mosfet_Driver_Typedef MD_one, Mosfet_Driver_Typedef MD_two,
 		HAL_TIM_PWM_Start(&MD_three.HS_Tim, MD_three.HST_Channel);
 		__HAL_TIM_SET_COMPARE(&MD_three.HS_Tim, MD_three.HST_Channel, User_Speed);
 
-		 MD_three_HS = 1;
-		 MD_two_LS = 1;
-
 		break;
-	case 4:
+	case 3:
 		// 3 > 1
 		HAL_GPIO_WritePin(MD_three.LS_Pin, MD_three.LSP_Number, GPIO_PIN_SET);
 		HAL_GPIO_WritePin(MD_two.LS_Pin, MD_two.LSP_Number, GPIO_PIN_SET);
@@ -615,12 +682,8 @@ void Motor_Driver(Mosfet_Driver_Typedef MD_one, Mosfet_Driver_Typedef MD_two,
 		__HAL_TIM_SET_COMPARE(&MD_two.HS_Tim, MD_two.HST_Channel, (int) User_Speed/2);
 		*/
 
-		 MD_three_HS = 1;
-		 MD_one_LS = 1;
-
-
 		break;
-	case 3:
+	case 4:
 		// 1 > 3
 		HAL_GPIO_WritePin(MD_one.LS_Pin, MD_one.LSP_Number, GPIO_PIN_SET);
 		HAL_GPIO_WritePin(MD_two.LS_Pin, MD_two.LSP_Number, GPIO_PIN_SET);
@@ -631,11 +694,9 @@ void Motor_Driver(Mosfet_Driver_Typedef MD_one, Mosfet_Driver_Typedef MD_two,
 		HAL_TIM_PWM_Start(&MD_one.HS_Tim, MD_one.HST_Channel);
 		__HAL_TIM_SET_COMPARE(&MD_one.HS_Tim, MD_one.HST_Channel, User_Speed);
 
-		 MD_one_HS = 1;
-		 MD_three_LS = 1;
 
 		break;
-	case 2:
+	case 5:
 		// 2 > 3
 		HAL_GPIO_WritePin(MD_two.LS_Pin, MD_two.LSP_Number, GPIO_PIN_SET);
 		HAL_GPIO_WritePin(MD_one.LS_Pin, MD_one.LSP_Number, GPIO_PIN_SET);
@@ -645,17 +706,13 @@ void Motor_Driver(Mosfet_Driver_Typedef MD_one, Mosfet_Driver_Typedef MD_two,
 		HAL_GPIO_WritePin(MD_three.LS_Pin, MD_three.LSP_Number, GPIO_PIN_RESET);
 		HAL_TIM_PWM_Start(&MD_two.HS_Tim, MD_two.HST_Channel);
 		__HAL_TIM_SET_COMPARE(&MD_two.HS_Tim, MD_two.HST_Channel, User_Speed);
-		/* =====================================/
+		/* =====================================
 		HAL_TIM_PWM_Start(&MD_one.HS_Tim, MD_one.HST_Channel);
 		__HAL_TIM_SET_COMPARE(&MD_one.HS_Tim, MD_one.HST_Channel, (int) User_Speed/2);
 		*/
 
-		 MD_two_HS = 1;
-		 MD_three_LS = 1;
-
-
 		break;
-	case 1:
+	case 6:
 		// 1 > 2
 		HAL_GPIO_WritePin(MD_one.LS_Pin, MD_one.LSP_Number, GPIO_PIN_SET);
 		HAL_GPIO_WritePin(MD_three.LS_Pin, MD_three.LSP_Number, GPIO_PIN_SET);
@@ -670,14 +727,10 @@ void Motor_Driver(Mosfet_Driver_Typedef MD_one, Mosfet_Driver_Typedef MD_two,
 		__HAL_TIM_SET_COMPARE(&MD_three.HS_Tim, MD_three.HST_Channel, (int) User_Speed/2);
 		*/
 
-		 MD_one_HS = 1;
-		 MD_two_LS = 1;
-
 		break;
 	}
 
 }
-
 
 
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan){
@@ -690,6 +743,43 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan){
 	 */
 
 }
+
+/* */
+int Speed_Controller(uint8_t user_speed, uint16_t current_rpm, uint16_t prvs_rpm,
+		 uint8_t delta_speed, uint8_t control_speed, uint8_t ignition){
+
+	if (user_speed > (control_speed + delta_speed) ) {
+	// ------ First If Start ------
+		uint8_t delta_rpm = current_rpm - prvs_rpm ;
+		if ((delta_rpm <= 10) ) {
+	// ------ Second If Start ------
+			if (delta_rpm == 0){
+	// ------ Thirt If Start ------
+				if (ignition) {
+	// ------ Fourth If Start ------
+					control_speed = delta_speed ;
+					ignition = 0;
+
+					return control_speed;
+				}
+	// ------ Fourth If Start ------
+				if (control_speed == delta_speed) {
+					return control_speed;
+				}
+			}
+	// ------ Thirt If End ------
+		control_speed = control_speed + delta_speed ;
+		prvs_rpm = current_rpm ;
+		return control_speed;
+		}
+	// ------ Second If End ------
+	}
+	// ------ First If End ------
+	else {
+		control_speed = user_speed;
+		return control_speed;
+	}}
+
 
 /* USER CODE END 4 */
 
