@@ -88,13 +88,6 @@ uint8_t  Prvs_Hal = 0;
 
 uint8_t Is_reverse = 0;
 uint8_t Is_break = 0;
-/* */
-
-uint16_t Prvs_Rpm = 0;
-uint8_t  Delta_Speed = 8;
-uint8_t  Control_speed = 0 ;
-
-uint8_t  Ignition = 1;
 
 
 /* USER CODE END PV */
@@ -109,8 +102,6 @@ static void MX_TIM1_Init(void);
 static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
 
-int Speed_Controller(uint8_t user_speed, uint16_t current_rpm, uint16_t prvs_rpm,
-		 uint8_t delta_speed, uint8_t control_speed, uint8_t  ignition);
 
 void Motor_Driver(Mosfet_Driver_Typedef MD_one, Mosfet_Driver_Typedef MD_two,
 		Mosfet_Driver_Typedef MD_three, uint8_t Hall_T, uint8_t User_speed);
@@ -743,43 +734,6 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan){
 	 */
 
 }
-
-/* */
-int Speed_Controller(uint8_t user_speed, uint16_t current_rpm, uint16_t prvs_rpm,
-		 uint8_t delta_speed, uint8_t control_speed, uint8_t ignition){
-
-	if (user_speed > (control_speed + delta_speed) ) {
-	// ------ First If Start ------
-		uint8_t delta_rpm = current_rpm - prvs_rpm ;
-		if ((delta_rpm <= 10) ) {
-	// ------ Second If Start ------
-			if (delta_rpm == 0){
-	// ------ Thirt If Start ------
-				if (ignition) {
-	// ------ Fourth If Start ------
-					control_speed = delta_speed ;
-					ignition = 0;
-
-					return control_speed;
-				}
-	// ------ Fourth If Start ------
-				if (control_speed == delta_speed) {
-					return control_speed;
-				}
-			}
-	// ------ Thirt If End ------
-		control_speed = control_speed + delta_speed ;
-		prvs_rpm = current_rpm ;
-		return control_speed;
-		}
-	// ------ Second If End ------
-	}
-	// ------ First If End ------
-	else {
-		control_speed = user_speed;
-		return control_speed;
-	}}
-
 
 /* USER CODE END 4 */
 
